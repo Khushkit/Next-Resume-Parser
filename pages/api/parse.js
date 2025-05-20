@@ -14,7 +14,18 @@ export const config = {
   },
 };
 
-const PROMPT = `Summarize the resume below into a JSON with exactly the following structure {basic_info: {first_name, last_name, full_name, email, phone_number, location, portfolio_website_url, linkedin_url, github_main_page_url, university, education_level (BS, MS, or PhD), graduation_year, graduation_month, majors, GPA}, work_experience: [{job_title, company, location, duration, job_summary}], project_experience:[{project_name, project_description}]}`;
+function buildPrompt(selectedFields, text) {
+  // selectedFields: { sectionKey: [subfieldKey, ...], ... }
+  if (!selectedFields || Object.keys(selectedFields).length === 0) {
+    return `Extract all possible structured information from this resume and return as JSON.\n${text}`;
+  }
+  let prompt = 'Extract the following sections and fields from the resume and return as JSON.\n';
+  Object.entries(selectedFields).forEach(([section, subfields]) => {
+    prompt += `Section: ${section}\nFields: ${subfields.join(', ')}\n`;
+  });
+  prompt += '\nResume:\n' + text;
+  return prompt;
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -64,7 +75,20 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Unsupported file type' });
       }
 
-      const prompt = PROMPT + '\n' + text;
+      // Parse selected fields from the request
+      let selectedFields = {};
+      try {
+        if (fields.fields) {
+          selectedFields = JSON.parse(fields.fields);
+        }
+      } catch (e) {}
+
+      // Clean up whitespace in extracted text
+      text = text.replace(/([a-z])([A-Z])/g, '$1 $2'); // Add space between camelCase
+      text = text.replace(/([.,!?:;])(\S)/g, '$1 $2'); // Add space after punctuation if missing
+      text = text.replace(/\s+/g, ' ').replace(/\n{2,}/g, '\n'); // Normalize spaces
+
+      const prompt = buildPrompt(selectedFields, text);
       const geminiRes = await axios.post(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
@@ -82,7 +106,30 @@ export default async function handler(req, res) {
           try { jsonResult = JSON.parse(match[0]); } catch (err) {}
         }
       }
-      res.status(200).json({ raw: geminiText, parsed: jsonResult });
+      // Only return selected fields
+      let filteredResult = {};
+      if (jsonResult && typeof jsonResult === 'object' && selectedFields && Object.keys(selectedFields).length > 0) {
+        Object.entries(selectedFields).forEach(([section, subfields]) => {
+          if (jsonResult[section]) {
+            if (Array.isArray(jsonResult[section])) {
+              // For arrays (e.g., work_experience)
+              filteredResult[section] = jsonResult[section].map(item => {
+                let obj = {};
+                subfields.forEach(f => { if (item[f]) obj[f] = item[f]; });
+                return obj;
+              });
+            } else if (typeof jsonResult[section] === 'object') {
+              filteredResult[section] = {};
+              subfields.forEach(f => { if (jsonResult[section][f]) filteredResult[section][f] = jsonResult[section][f]; });
+            } else {
+              filteredResult[section] = jsonResult[section];
+            }
+          }
+        });
+      } else {
+        filteredResult = jsonResult;
+      }
+      res.status(200).json({ raw: geminiText, parsed: filteredResult });
     } catch (error) {
       console.error('Parse API error:', error);
       res.status(500).json({ error: 'Failed to process file or call Gemini', details: error.message, stack: error.stack });
