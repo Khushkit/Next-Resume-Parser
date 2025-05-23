@@ -203,6 +203,85 @@ export default function ResultPage() {
       .trim();
   }
 
+  // Function to format JSON with syntax highlighting
+  function formatJsonWithHighlighting(json) {
+    if (!json) return '';
+    
+    // Convert JSON to string with proper indentation
+    const jsonString = JSON.stringify(json, null, 2);
+    
+    // Process the JSON string token by token to apply highlighting
+    let result = '';
+    let inString = false;
+    let currentToken = '';
+    let colonNext = false;
+    
+    for (let i = 0; i < jsonString.length; i++) {
+      const char = jsonString[i];
+      
+      if (char === '"' && (i === 0 || jsonString[i-1] !== '\\')) {
+        // Handle start/end of string
+        if (!inString) {
+          // Starting a new string
+          inString = true;
+          currentToken = '"';
+        } else {
+          // Ending a string
+          currentToken += '"';
+          
+          // Check if this is a key (followed by colon)
+          let j = i + 1;
+          while (j < jsonString.length && /\s/.test(jsonString[j])) j++;
+          
+          if (j < jsonString.length && jsonString[j] === ':') {
+            // This is a key (red)
+            result += `<span class="text-red-600">${currentToken}</span>`;
+            colonNext = true;
+          } else {
+            // This is a value (blue)
+            result += `<span class="text-blue-600">${currentToken}</span>`;
+          }
+          
+          inString = false;
+          currentToken = '';
+        }
+      } else if (inString) {
+        // Inside a string, collect characters
+        currentToken += char;
+      } else if (/\d/.test(char)) {
+        // Handle numbers
+        if (!/\d/.test(jsonString[i-1]) && !/\./.test(jsonString[i-1])) {
+          // Start of a number
+          currentToken = char;
+          
+          // Collect the whole number
+          let j = i + 1;
+          while (j < jsonString.length && (/\d/.test(jsonString[j]) || jsonString[j] === '.')) {
+            currentToken += jsonString[j];
+            j++;
+          }
+          
+          // Add the highlighted number
+          result += `<span class="text-green-600">${currentToken}</span>`;
+          
+          // Skip the characters we've processed
+          i = j - 1;
+          currentToken = '';
+        }
+      } else if (char === ':' && colonNext) {
+        // Handle colon after a key
+        result += char;
+        colonNext = false;
+      } else {
+        // Handle all other characters
+        result += char;
+      }
+    }
+    
+    // Return the HTML to be rendered
+    return <div dangerouslySetInnerHTML={{ __html: result }} />;
+  }
+
   // Helper to render a field value with proper formatting
   function renderFieldValue(key, value) {
     // Handle different types of fields
@@ -424,7 +503,7 @@ export default function ResultPage() {
             {/* Display formatted JSON with syntax highlighting */}
             <div className="bg-white rounded border border-gray-200 p-4 overflow-auto">
               <pre className="text-xs font-mono text-left whitespace-pre">
-                {JSON.stringify(parsedData, null, 2)}
+                {formatJsonWithHighlighting(parsedData)}
               </pre>
             </div>
           </div>
