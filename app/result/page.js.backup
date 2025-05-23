@@ -1,0 +1,341 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { supabase } from '../../lib/supabase';
+import { Document, Page, pdfjs } from 'react-pdf';
+
+// Set up the worker for PDF.js
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
+
+export default function ResultPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const recordId = searchParams.get('id');
+  
+  const [parsedData, setParsedData] = useState(null);
+  const [fileName, setFileName] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [pdfFile, setPdfFile] = useState(null);
+  const [numPages, setNumPages] = useState(null);
+  const [pageNumber, setPageNumber] = useState(1);
+
+  useEffect(() => {
+    async function fetchRecord() {
+      try {
+        setLoading(true);
+        
+        // If we have a record ID in the URL, fetch from Supabase
+        if (recordId) {
+          const { data, error } = await supabase
+            .from('resume_records')
+            .select('*')
+            .eq('id', recordId)
+            .single();
+          
+          if (error) throw error;
+          
+          if (data) {
+            setParsedData(data.parsed_result);
+            setFileName(data.file_name);
+            
+            // Try to get the PDF from storage or the original file path
+            if (data.original_file_path) {
+              try {
+                // If we have a stored PDF, fetch it
+                const response = await fetch(data.original_file_path);
+                if (response.ok) {
+                  const blob = await response.blob();
+                  setPdfFile(URL.createObjectURL(blob));
+                }
+              } catch (pdfError) {
+                console.error('Error loading PDF:', pdfError);
+                // Continue without the PDF
+              }
+            }
+            
+            return;
+          }
+        }
+        
+        // Fallback to localStorage if no record ID or record not found
+        const storedData = localStorage.getItem('lastParsedResume');
+        if (storedData) {
+          const parsedResume = JSON.parse(storedData);
+          setParsedData(parsedResume.result);
+          setFileName(parsedResume.fileName);
+          
+          // Try to get the PDF file from localStorage if available
+          const storedPdfFile = localStorage.getItem('lastParsedPDF');
+          if (storedPdfFile) {
+            setPdfFile(storedPdfFile);
+          }
+          
+          // Save to Supabase if it was parsed successfully
+          if (parsedResume.result && !recordId) {
+            saveToSupabase(parsedResume);
+          }
+        } else {
+          // No data found, redirect back to upload
+          router.push('/upload');
+        }
+      } catch (err) {
+        console.error('Error loading parsed data:', err);
+        setError('Failed to load resume data: ' + err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    fetchRecord();
+  }, [router, recordId]);
+  
+  async function saveToSupabase(parsedResume) {
+    try {
+      const response = await fetch('/api/records', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fileName: parsedResume.fileName,
+          fileType: parsedResume.fileName.split('.').pop() || 'unknown',
+          status: 'completed',
+          selectedFields: parsedResume.selectedFields || {},
+          parsedResult: parsedResume.result || null
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        console.error('Error saving to Supabase:', data);
+      } else {
+        // Update URL with record ID without full page reload
+        const url = new URL(window.location);
+        url.searchParams.set('id', data.id);
+        window.history.pushState({}, '', url);
+      }
+    } catch (err) {
+      console.error('Failed to save record:', err);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  if (!parsedData) {
+    return (
+      <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4">
+        <div className="flex">
+          <div className="ml-3">
+            <p className="text-sm text-yellow-700">
+              No parsed data found. Please upload a resume first.
+            </p>
+            <div className="mt-4">
+              <Link href="/upload" className="text-sm font-medium text-yellow-700 underline">
+                Go to Upload
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow-md">
+      <div className="border-b border-gray-200 bg-gray-50 px-4 py-5 sm:px-6">
+        <h3 className="text-lg font-medium leading-6 text-gray-900">
+          Parse Results for: {fileName}
+        </h3>
+        <p className="mt-1 max-w-2xl text-sm text-gray-500">
+          Extracted Information
+        </p>
+      </div>
+      
+      <div className="px-4 py-5 sm:p-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Left column: PDF viewer */}
+          <div className="bg-gray-100 rounded-lg h-[600px] flex flex-col items-center justify-center">
+            {pdfFile ? (
+              <div className="w-full h-full flex flex-col items-center">
+                <div className="flex-grow overflow-auto w-full flex justify-center">
+                  <Document
+                    file={pdfFile}
+                    onLoadSuccess={onDocumentLoadSuccess}
+                    className="w-full"
+                  >
+                    <Page 
+                      pageNumber={pageNumber} 
+                      width={450} 
+                      renderTextLayer={false}
+                      renderAnnotationLayer={false}
+                    />
+                  </Document>
+                </div>
+                {numPages > 1 && (
+                  <div className="py-2 flex items-center justify-center space-x-4">
+                    <button 
+                      onClick={goToPrevPage} 
+                      disabled={pageNumber <= 1}
+                      className={`px-3 py-1 rounded ${pageNumber <= 1 ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                    >
+                      Previous
+                    </button>
+                    <p>
+                      Page {pageNumber} of {numPages}
+                    </p>
+                    <button 
+                      onClick={goToNextPage} 
+                      disabled={pageNumber >= numPages}
+                      className={`px-3 py-1 rounded ${pageNumber >= numPages ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center">
+                <p className="text-gray-500 mb-2">PDF preview not available</p>
+                <p className="text-sm text-gray-400">Original document could not be loaded</p>
+              </div>
+            )}
+          </div>
+          
+          {/* Right column: Parsed Data */}
+          <div className="bg-gray-50 rounded-lg p-4 max-h-[600px] overflow-y-auto space-y-6">
+          <h4 className="font-medium text-gray-700 mb-3">Extracted Information</h4>
+          <div className="overflow-y-auto h-[70vh] space-y-4 pr-2">
+            {/* Basic Info */}
+            {parsedData.basic_info && (
+              <div className="bg-blue-50 p-4 rounded-md">
+                <h5 className="font-medium text-blue-700 mb-2">Basic Information</h5>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {Object.entries(parsedData.basic_info).map(([key, value]) => (
+                    value && (
+                      <div key={key} className="flex flex-col">
+                        <span className="text-xs text-gray-500 capitalize">{key.replace(/_/g, ' ')}</span>
+                        <span className="text-sm">{value}</span>
+                      </div>
+                    )
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Work Experience */}
+            {parsedData.work_experience && Array.isArray(parsedData.work_experience) && (
+              <div className="bg-green-50 p-4 rounded-md">
+                <h5 className="font-medium text-green-700 mb-2">Work Experience</h5>
+                <div className="space-y-3">
+                  {parsedData.work_experience.map((exp, idx) => (
+                    <div key={idx} className="bg-white p-3 rounded border border-green-100">
+                      {Object.entries(exp).map(([key, value]) => (
+                        value && (
+                          <div key={key} className="mb-1">
+                            <span className="text-xs text-gray-500 capitalize mr-1">{key.replace(/_/g, ' ')}:</span>
+                            <span className="text-sm">{value}</span>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Project Experience */}
+            {parsedData.project_experience && Array.isArray(parsedData.project_experience) && (
+              <div className="bg-amber-50 p-4 rounded-md">
+                <h5 className="font-medium text-amber-700 mb-2">Project Experience</h5>
+                <div className="space-y-3">
+                  {parsedData.project_experience.map((proj, idx) => (
+                    <div key={idx} className="bg-white p-3 rounded border border-amber-100">
+                      {Object.entries(proj).map(([key, value]) => (
+                        value && (
+                          <div key={key} className="mb-1">
+                            <span className="text-xs text-gray-500 capitalize mr-1">{key.replace(/_/g, ' ')}:</span>
+                            <span className="text-sm">{value}</span>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Custom Sections */}
+            {Object.entries(parsedData).filter(([key]) => 
+              !['basic_info', 'work_experience', 'project_experience'].includes(key)
+            ).map(([key, value]) => (
+              <div key={key} className="bg-purple-50 p-4 rounded-md">
+                <h5 className="font-medium text-purple-700 mb-2 capitalize">{key.replace(/_/g, ' ')}</h5>
+                {Array.isArray(value) ? (
+                  <div className="space-y-3">
+                    {value.map((item, idx) => (
+                      <div key={idx} className="bg-white p-3 rounded border border-purple-100">
+                        {Object.entries(item).map(([itemKey, itemValue]) => (
+                          itemValue && (
+                            <div key={itemKey} className="mb-1">
+                              <span className="text-xs text-gray-500 capitalize mr-1">{itemKey.replace(/_/g, ' ')}:</span>
+                              <span className="text-sm">{itemValue}</span>
+                            </div>
+                          )
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ) : typeof value === 'object' ? (
+                  <div className="bg-white p-3 rounded border border-purple-100">
+                    {Object.entries(value).map(([objKey, objValue]) => (
+                      objValue && (
+                        <div key={objKey} className="mb-1">
+                          <span className="text-xs text-gray-500 capitalize mr-1">{objKey.replace(/_/g, ' ')}:</span>
+                          <span className="text-sm">{objValue}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                ) : (
+                  <div className="bg-white p-3 rounded border border-purple-100">
+                    <span className="text-sm">{value}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-gray-200 px-4 py-5 sm:p-6">
+        <div className="flex justify-between">
+          <Link 
+            href="/upload" 
+            className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+          >
+            Back to Upload
+          </Link>
+          <button 
+            onClick={() => {
+              // Record is already saved to Supabase at this point
+              router.push('/records');
+            }}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700"
+          >
+            Save to Records
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
