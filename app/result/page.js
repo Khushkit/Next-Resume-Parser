@@ -406,99 +406,27 @@ export default function ResultPage() {
             </div>
           </div>
           
-          {/* Right column: Parsed Data */}
-          <div className="bg-gray-50 rounded-lg p-4 max-h-[600px] overflow-y-auto space-y-6">
-            <h4 className="font-medium text-gray-700 mb-4">Extracted Information</h4>
+          {/* Right column: Raw JSON Response */}
+          <div className="bg-gray-50 rounded-lg p-4 max-h-[600px] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h4 className="font-medium text-gray-700">JSON Response</h4>
+              <button 
+                onClick={() => {
+                  navigator.clipboard.writeText(JSON.stringify(parsedData, null, 2));
+                  alert('JSON copied to clipboard');
+                }}
+                className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+              >
+                Copy JSON
+              </button>
+            </div>
             
-            {/* No debug information in production */}
-            
-            {/* Render each section of the parsed data */}
-            {Object.entries(parsedData || {}).map(([section, sectionData]) => {
-              // Skip empty sections entirely
-              if (!sectionData || 
-                  (Array.isArray(sectionData) && sectionData.length === 0) ||
-                  (typeof sectionData === 'object' && Object.keys(sectionData).length === 0)) {
-                return null;
-              }
-
-              // Format section title for display
-              const sectionTitle = section
-                .replace(/_/g, ' ')
-                .split(' ')
-                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-                .join(' ');
-
-              // Choose background color based on section
-              let bgColor = 'bg-blue-50';
-              let titleColor = 'text-blue-700';
-              let borderColor = 'border-blue-100';
-              
-              if (section.includes('education')) {
-                bgColor = 'bg-green-50';
-                titleColor = 'text-green-700';
-                borderColor = 'border-green-100';
-              } else if (section.includes('experience')) {
-                bgColor = 'bg-purple-50';
-                titleColor = 'text-purple-700';
-                borderColor = 'border-purple-100';
-              } else if (section.includes('skill')) {
-                bgColor = 'bg-yellow-50';
-                titleColor = 'text-yellow-700';
-                borderColor = 'border-yellow-100';
-              } else if (section.includes('project')) {
-                bgColor = 'bg-indigo-50';
-                titleColor = 'text-indigo-700';
-                borderColor = 'border-indigo-100';
-              } else if (section.includes('achievement')) {
-                bgColor = 'bg-teal-50';
-                titleColor = 'text-teal-700';
-                borderColor = 'border-teal-100';
-              }
-
-              return (
-                <div key={section} className={`${bgColor} p-4 rounded-md mb-4`}>
-                  <h5 className={`font-medium ${titleColor} mb-3`}>{sectionTitle}</h5>
-                  
-                  {/* Handle all array-type sections the same way */}
-                  {Array.isArray(sectionData) ? (
-                    <div className="space-y-4">
-                      {sectionData.map((item, idx) => (
-                        <div key={idx} className={`bg-white p-4 rounded border ${borderColor}`}>
-                          {Object.entries(item).map(([key, value]) => (
-                            value && (
-                              <div key={key} className="mb-3">
-                                <span className="text-xs text-gray-500 capitalize block">
-                                  {key.replace(/_/g, ' ')}
-                                </span>
-                                <div className="mt-1">
-                                  {renderFieldValue(key, value)}
-                                </div>
-                              </div>
-                            )
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    /* For sections that are objects with key-value pairs (like basic_info) */
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-y-3 gap-x-4">
-                      {Object.entries(sectionData).map(([key, value]) => (
-                        value && (
-                          <div key={key} className="mb-2">
-                            <span className="text-xs text-gray-500 capitalize block">
-                              {key.replace(/_/g, ' ')}
-                            </span>
-                            <div className="mt-1">
-                              {renderFieldValue(key, value)}
-                            </div>
-                          </div>
-                        )
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {/* Display formatted JSON with syntax highlighting */}
+            <div className="bg-white rounded border border-gray-200 p-4 overflow-auto">
+              <pre className="text-xs font-mono text-left whitespace-pre">
+                {JSON.stringify(parsedData, null, 2)}
+              </pre>
+            </div>
           </div>
         </div>
       </div>
